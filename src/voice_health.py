@@ -29,7 +29,7 @@ import urllib.request
 import wave
 from pathlib import Path
 
-from voice_config import MUTEX_PREFIX, CODE_DIR, KOKORO_CONTAINER, STT_URL, TTS_URL, WHISPER_CONTAINER
+from voice_config import MUTEX_PREFIX, CODE_DIR, KOKORO_CONTAINER, SPEAK_HOOK, STT_URL, TTS_URL, WHISPER_CONTAINER
 
 SCRIPTS = ["voice_watchdog.py", "voice_inbox.py", "voice_panel.py"]
 if os.getenv("TALKOVER_STOP_WORD", "0") == "1":
@@ -85,7 +85,8 @@ def check_processes():
         mtx = "mutex held" if mutex_exists(script[:-3]) else "no mutex (old code)"
         status = "OK" if n == 1 else "FAIL"
         line(status, script, "%d running (pid %s), %s" % (n, pids or "-", mtx))
-    hooks = [p for p in procs if "speak-response.ps1" in (p.get("CommandLine") or "")]
+    hook = str(SPEAK_HOOK).replace("/", "\\").lower()     # only this install's hook, not another copy's
+    hooks = [p for p in procs if hook in cmd(p)]
     line("OK" if len(hooks) <= 1 else "WARN", "speak-response.ps1 hooks",
          "%d running (0 or 1 is normal)" % len(hooks))
 
@@ -110,7 +111,25 @@ def tone_wav(seconds=1.5, rate=16000, hz=440.0):
     return buf.getvalue()
 
 
-def check_stt():
+def check_stt(warmup=False):
+    """Timed transcription of a tone. warmup: one untimed request first (right after install the model is still
+    loading, which says nothing about normal speed)."""
+    if warmup:
+        try:
+            _stt_request(60)
+        except Exception:
+            pass
+    t0 = time.monotonic()
+    try:
+        text = _stt_request(60)
+        dt = time.monotonic() - t0
+        line("OK" if dt <= SLOW_S else "SLOW", "whisper test (1.5 s tone)",
+             "%.2f s, text %r" % (dt, text[:40]))
+    except Exception as e:
+        line("FAIL", "whisper test (1.5 s tone)", "%.1f s: %s" % (time.monotonic() - t0, e))
+
+
+def _stt_request(timeout):
     body = tone_wav()
     boundary = "----voicehealth%d" % int(time.time() * 1000)
     parts = []
@@ -123,15 +142,8 @@ def check_stt():
     parts.append(("--%s--\r\n" % boundary).encode())
     req = urllib.request.Request(STT_URL, data=b"".join(parts),
                                  headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
-    t0 = time.monotonic()
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            text = json.loads(r.read().decode("utf-8")).get("text", "")
-        dt = time.monotonic() - t0
-        line("OK" if dt <= SLOW_S else "SLOW", "whisper test (1.5 s tone)",
-             "%.2f s, text %r" % (dt, text[:40]))
-    except Exception as e:
-        line("FAIL", "whisper test (1.5 s tone)", "%.1f s: %s" % (time.monotonic() - t0, e))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8")).get("text", "")
 
 
 def check_tts():
@@ -190,7 +202,7 @@ def main():
     if not engines_only:
         check_processes()
     check_containers()
-    check_stt()
+    check_stt(warmup=engines_only)          # --engines-only is what install.ps1 runs, right after the model download
     check_tts()
     check_roundtrip()
     if not engines_only:
