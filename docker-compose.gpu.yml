@@ -1,0 +1,12 @@
+# NVIDIA GPU override for Whisper (needs Docker Desktop with WSL2 GPU support and a recent NVIDIA driver).
+#   docker compose --env-file config.env -f docker-compose.yml -f docker-compose.gpu.yml up -d
+services:
+  whisper:
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

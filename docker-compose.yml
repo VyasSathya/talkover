@@ -1,0 +1,29 @@
+# Local speech engines for Talkover. Both bind to 127.0.0.1 only: nothing leaves the machine.
+#   docker compose --env-file config.env up -d          (CPU, works everywhere)
+#   add -f docker-compose.yml -f docker-compose.gpu.yml  (NVIDIA GPU: much faster Whisper)
+name: ${TALKOVER_COMPOSE_PROJECT:-talkover}
+
+services:
+  whisper:   # speech to text: speaches (faster-whisper), OpenAI-compatible /v1/audio/transcriptions
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: ${TALKOVER_WHISPER_CONTAINER:-talkover-whisper}
+    ports:
+      - "127.0.0.1:${TALKOVER_STT_PORT:-2022}:8000"
+    environment:
+      WHISPER__TTL: "-1"            # keep the model loaded (an idle unload costs seconds on the next utterance)
+      DO_NOT_TRACK: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    volumes:
+      - whisper-models:/home/ubuntu/.cache/huggingface/hub
+      - ./engines/model_aliases.json:/home/ubuntu/speaches/model_aliases.json:ro
+    restart: unless-stopped
+
+  kokoro:    # text to speech: Kokoro-82M, OpenAI-compatible /v1/audio/speech
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: ${TALKOVER_KOKORO_CONTAINER:-talkover-kokoro}
+    ports:
+      - "127.0.0.1:${TALKOVER_TTS_PORT:-8880}:8880"
+    restart: unless-stopped
+
+volumes:
+  whisper-models:

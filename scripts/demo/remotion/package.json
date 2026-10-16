@@ -1,0 +1,16 @@
+{
+  "name": "voice-floater-demo",
+  "private": true,
+  "description": "Renders the demo cut from a take's timeline.json (scripts/demo/build.py).",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Demo"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.531",
+    "@remotion/google-fonts": "4.0.531",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.531"
+  }
+}

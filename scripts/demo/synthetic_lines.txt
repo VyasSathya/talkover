@@ -1,0 +1,4 @@
+Hey Claude, what does the install script do?
+Okay. Add a check that Docker is running before anything else.
+Wait, make it print a clear message too.
+Thanks. Now read me the README intro.

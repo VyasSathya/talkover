@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+config.env
+*.log
+*.bak*
+demo-out/
+node_modules/
+# launch drafts stay local (not for the public history)
+launch/

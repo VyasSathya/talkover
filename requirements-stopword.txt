@@ -1,0 +1,3 @@
+# Optional: the Vosk "stop" listener for the VoiceMode MCP server (extras/voicemode-mcp).
+-r requirements.txt
+vosk>=0.3.45

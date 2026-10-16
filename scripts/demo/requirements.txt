@@ -1,0 +1,3 @@
+# Demo video pipeline (scripts/demo). Installed into the same .venv by demo.ps1.
+-r ../../requirements.txt
+PyAudioWPatch>=0.2.12
