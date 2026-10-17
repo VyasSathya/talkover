@@ -2,13 +2,15 @@
 
 A hands-free, two-way voice loop for Claude Code on Windows. Fully local.
 
-![Talkover: you ask, Claude answers out loud, you cut in with "wait", and Claude picks up where it was cut off](docs/demo.gif)
+![Talkover: always listening, it types what you say, it talks back, say "wait" and it stops, it picks up where you cut in, fully local](docs/demo.gif)
 
-The full 60-second demo with sound is on the [v0.1.0 release](https://github.com/VyasSathya/talkover/releases/tag/v0.1.0).
-Both voices in it are synthetic (Kokoro); nobody's real voice is used. Claude's replies and the edit are real output of
-a Claude Code agent working in a copy of this repo, the panel is drawn by Talkover's own `voice_panel.py`, and the
-waits for Claude are shortened. An agent made the video end to end, with no human step
-([video-studio](https://github.com/VyasSathya/video-studio)).
+Watch the 20-second [launch film](https://github.com/VyasSathya/talkover/releases/download/v0.1.0/talkover-launch-16x9.mp4)
+([vertical](https://github.com/VyasSathya/talkover/releases/download/v0.1.0/talkover-launch-9x16.mp4)). There is no
+voice in it: the floating panel is drawn by Talkover's own `voice_panel.py`, driven by a demo session in which the
+"You:" lines are what Whisper heard from a synthetic Kokoro voice and Claude's lines are a real reply from a Claude
+Code agent working in a copy of this repo, with the waits shortened. The music is made locally. The original
+60-second demo, with both synthetic voices, is on the same [v0.1.0 release](https://github.com/VyasSathya/talkover/releases/tag/v0.1.0).
+An agent made both films end to end ([video-studio](https://github.com/VyasSathya/video-studio)).
 
 - **Always-on mic.** No hotkey, no wake word. Talk whenever you want; each thing you say is transcribed and sent to
   Claude Code as a normal message, whether Claude is idle, working, or talking.
