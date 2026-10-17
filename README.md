@@ -2,7 +2,12 @@
 
 A hands-free, two-way voice loop for Claude Code on Windows. Fully local.
 
-<!-- Hero: docs/demo.gif, made by scripts/demo/demo.ps1 from a real take (see "Make a demo video"). -->
+![Talkover: you ask, Claude answers out loud, you cut in with "wait", and Claude picks up where it was cut off](docs/demo.gif)
+
+The full 60-second demo with sound is on the [v0.1.0 release](https://github.com/VyasSathya/talkover/releases/tag/v0.1.0).
+Both voices in it are synthetic (Kokoro); nobody's real voice is used. Claude's replies and the edit are real output of
+a Claude Code agent working in a copy of this repo, the panel is drawn by Talkover's own `voice_panel.py`, and the
+waits for Claude are shortened. An agent made the video end to end, with no human step.
 
 - **Always-on mic.** No hotkey, no wake word. Talk whenever you want; each thing you say is transcribed and sent to
   Claude Code as a normal message, whether Claude is idle, working, or talking.
