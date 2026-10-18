@@ -10,8 +10,6 @@ it too.
 git clone https://github.com/VyasSathya/talkover && cd talkover && ./install.sh && ./scripts/mac_check.sh
 ```
 
-(Before the cross-platform work is merged, add `git checkout cross-platform &&` after `cd talkover`.)
-
 `install.sh` picks the native engines on Apple Silicon (no Docker; Whisper on Metal, Kokoro in Python) and downloads
 about 800 MB of models the first time. macOS asks for the **Microphone** permission for your terminal app during the
 mic step: allow it.
