@@ -101,6 +101,8 @@
   .copy { position: absolute; top: 12px; right: 12px; height: 32px; padding: 0 12px; border-radius: 8px;
     border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: #e9e9ec; font: 500 13px Geist, sans-serif; cursor: pointer; }
   .copy:hover { background: rgba(255,255,255,.12); }
+  .os { margin: 6px 0 -4px; font-size: 14px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .beta { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--you); border: 1px solid currentColor; border-radius: 999px; padding: 1px 8px; }
   .needs { display: flex; flex-wrap: wrap; gap: 8px 10px; font-size: 14px; color: var(--muted); padding: 0; margin: 4px 0 0; list-style: none; }
   .needs li { padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); }
 
@@ -177,12 +179,12 @@
 <main id="top">
   <div class="wrap hero">
     <h1><span>Talk to Claude Code.</span> <span>It talks back.</span></h1>
-    <p class="lede">Talkover keeps your mic open, types what you say into Claude Code, and reads every reply out loud. Cut in whenever you want. It all runs on your PC.</p>
+    <p class="lede">Talkover keeps your mic open, types what you say into Claude Code, and reads every reply out loud. Cut in whenever you want. It all runs on your computer.</p>
     <div class="cta">
       <a class="btn primary" href="#install">Install</a>
       <a class="btn" href="https://github.com/VyasSathya/talkover">View on GitHub</a>
     </div>
-    <p class="meta">Free and open source. Windows 10 and 11.</p>
+    <p class="meta">Free and open source. Windows, with macOS and Linux in beta.</p>
 
     <div class="film">
       <video id="film" autoplay muted loop playsinline preload="metadata" poster="assets/poster-16x9.jpg" aria-label="Talkover launch film, 20 seconds"></video>
@@ -197,8 +199,9 @@
     <div class="wrap">
       <p class="eyebrow">Install</p>
       <h2>One script sets it all up.</h2>
-      <p class="sub">It creates the Python environment, starts the two speech engines in Docker, downloads the Whisper model, adds Talkover to your Claude Code settings (with a backup), and checks that everything answers.</p>
+      <p class="sub">It creates the Python environment, sets up the two speech engines (in Docker, or natively with no Docker on Apple Silicon), downloads the models, adds Talkover to your Claude Code settings (with a backup), and checks that everything answers.</p>
       <div class="install">
+        <p class="os">Windows</p>
         <div class="code">
           <button class="copy" type="button" data-copy="git clone https://github.com/VyasSathya/talkover&#10;cd talkover&#10;powershell -ExecutionPolicy Bypass -File .\install.ps1&#10;powershell -ExecutionPolicy Bypass -File .\start.ps1">Copy</button>
 <pre><code>git clone https://github.com/VyasSathya/talkover
@@ -206,11 +209,19 @@ cd talkover
 powershell -ExecutionPolicy Bypass -File .\install.ps1   <span class="c"># -Gpu for NVIDIA</span>
 powershell -ExecutionPolicy Bypass -File .\start.ps1</code></pre>
         </div>
+        <p class="os">macOS and Linux <span class="beta">Beta</span></p>
+        <div class="code">
+          <button class="copy" type="button" data-copy="git clone https://github.com/VyasSathya/talkover&#10;cd talkover&#10;./install.sh&#10;./start.sh">Copy</button>
+<pre><code>git clone https://github.com/VyasSathya/talkover
+cd talkover
+./install.sh
+./start.sh     <span class="c"># then run claude inside tmux</span></code></pre>
+        </div>
         <ul class="needs" aria-label="Requirements">
-          <li>Windows 10 or 11</li>
-          <li>Claude desktop app</li>
+          <li>Windows 10 or 11, macOS 13+, or Linux</li>
           <li>Python 3.11+</li>
-          <li>Docker Desktop</li>
+          <li>Docker, or the native engines</li>
+          <li>tmux on macOS and Linux</li>
           <li>A microphone</li>
         </ul>
       </div>
@@ -270,7 +281,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1</code></pre>
         <div class="row" role="row"><div role="cell">Interrupt by voice</div><div role="cell" class="yes">Yes</div><div role="cell" class="no">No</div></div>
         <div class="row" role="row"><div role="cell">Where speech is processed</div><div role="cell" class="yes">On your PC</div><div role="cell" class="no">Anthropic's servers</div></div>
         <div class="row" role="row"><div role="cell">Claude desktop app</div><div role="cell" class="yes">Code tab</div><div role="cell" class="no">Not available</div></div>
-        <div class="row" role="row"><div role="cell">Platforms</div><div role="cell" class="no">Windows today</div><div role="cell" class="yes">Mac, Linux, Windows</div></div>
+        <div class="row" role="row"><div role="cell">Platforms</div><div role="cell" class="yes">Windows; macOS and Linux in beta</div><div role="cell" class="yes">Mac, Linux, Windows</div></div>
       </div>
     </div>
   </section>
@@ -282,15 +293,15 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1</code></pre>
       <div class="faq">
         <details>
           <summary>Does any audio leave my computer?</summary>
-          <p>No. Whisper (speech to text) and Kokoro (the voice) run in Docker on your PC and only listen on 127.0.0.1. Talkover sends your words to Claude Code the same way typing would; nothing else goes anywhere.</p>
+          <p>No. Whisper (speech to text) and Kokoro (the voice) run on your computer, in Docker or natively, and only listen on 127.0.0.1. Talkover sends your words to Claude Code the same way typing would; nothing else goes anywhere.</p>
         </details>
         <details>
-          <summary>Is it Windows only?</summary>
-          <p>For now. Typing into Claude uses Windows UI Automation, so the mic side needs Windows and the Claude desktop app. A Mac and Linux version for the Claude Code CLI is the next thing being looked at; watch the repo to hear when it lands.</p>
+          <summary>Does it work on a Mac or Linux?</summary>
+          <p>Yes, in beta. Run Claude Code inside tmux and Talkover types into that pane; on a Mac without tmux it can paste into Terminal, iTerm2, Ghostty or the Claude app instead. On Apple Silicon the speech engines run natively, with no Docker. macOS and Linux pass the automated tests; a Mac stays marked beta until it has been checked on real hardware with a microphone and speakers.</p>
         </details>
         <details>
           <summary>Does it work with the Claude Code CLI?</summary>
-          <p>Spoken replies do, because they come from Claude Code hooks that run for every session. The always-on mic types into the Claude desktop app's Code tab today.</p>
+          <p>Yes. Spoken replies come from Claude Code hooks, which run for every session. On macOS and Linux your words go into the CLI through tmux. On Windows the mic types into the Claude desktop app's Code tab.</p>
         </details>
         <details>
           <summary>What does it cost?</summary>
@@ -298,7 +309,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1</code></pre>
         </details>
         <details>
           <summary>What do I need?</summary>
-          <p>Windows 10 or 11, the Claude desktop app, Python 3.11 or newer from python.org, Docker Desktop (about 8 GB of images the first time), and a microphone. A headset works best; with speakers, Talkover removes its own voice from what the mic hears. An NVIDIA GPU makes speech recognition faster but is optional.</p>
+          <p>Python 3.11 or newer and a microphone. On Windows: the Claude desktop app and Docker Desktop (about 8 GB of images the first time). On a Mac: tmux, and on Apple Silicon nothing else (about 800 MB of models, no Docker). On Linux: tmux, PortAudio, and Docker or the native engines. A headset works best; with speakers, Talkover removes its own voice from what the mic hears.</p>
         </details>
         <details>
           <summary>Is it made by Anthropic?</summary>
