@@ -17,10 +17,22 @@ file changes. Used by voice_panel.py (the list) and voice_inbox.py (delivery).
 """
 import json
 import os
+import sys
+import tempfile
 import time
 from pathlib import Path
 
-SESSIONS_DIR = Path(os.getenv("APPDATA", "")) / "Claude" / "claude-code-sessions"
+
+def _tmp() -> Path:
+    """%TEMP% on Windows; TALKOVER_TEMP or the system temp folder on macOS / Linux (read when called)."""
+    if sys.platform == "win32":
+        return Path(os.getenv("TEMP", ""))
+    return Path(os.getenv("TALKOVER_TEMP") or tempfile.gettempdir())
+
+if sys.platform == "darwin":
+    SESSIONS_DIR = Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+else:
+    SESSIONS_DIR = Path(os.getenv("APPDATA", "")) / "Claude" / "claude-code-sessions"
 ACTIVE_HOURS = float(os.getenv("VOICE_CHATS_HOURS", "3"))
 DOC_SUFFIX = " - Claude Code"          # the chat's web page is named "<title> - Claude Code"
 
@@ -28,7 +40,7 @@ _cache = {}                            # path -> (mtime, record or None)
 
 
 def pin_file() -> Path:
-    return Path(os.getenv("TEMP", "")) / "claude-voice.pin"
+    return _tmp() / "claude-voice.pin"
 
 
 # ---------------------------------------------------------------- the app's session files
@@ -145,11 +157,11 @@ def pinned():
 # speak hook reads only that chat's replies in auto and holds the others in claude-speak.held\<first 8>.json.
 
 def shown_file() -> Path:
-    return Path(os.getenv("TEMP", "")) / "claude-voice.shown"
+    return _tmp() / "claude-voice.shown"
 
 
 def held_dir() -> Path:
-    return Path(os.getenv("TEMP", "")) / "claude-speak.held"
+    return _tmp() / "claude-speak.held"
 
 
 def chat_by_title(title: str):

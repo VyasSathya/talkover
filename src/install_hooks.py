@@ -5,11 +5,12 @@
     python src/install_hooks.py --remove
     python src/install_hooks.py --settings path/to/settings.json
 
-Adds two hooks that run hooks/speak-response.ps1 from this repo:
+Adds two hooks that run this repo's speak hook (hooks/speak-response.ps1 on Windows, hooks/speak_response.py
+on macOS and Linux):
   Stop        reads the finished reply aloud
   PreToolUse  (-Mode transcript) reads text Claude wrote before a tool call, so you hear it while it works
 Idempotent: entries pointing at this repo's hook are replaced, never duplicated. If settings.json already runs a
-speak-response.ps1 from somewhere else, nothing is changed unless --replace is given.
+speak hook from somewhere else, nothing is changed unless --replace is given.
 """
 import argparse
 import json
@@ -20,8 +21,13 @@ from pathlib import Path
 
 from voice_config import HOOKS_DIR
 
-HOOK = (HOOKS_DIR / "speak-response.ps1").resolve()
-BASE = 'powershell -NoProfile -ExecutionPolicy Bypass -File "%s"' % HOOK.as_posix()
+# Windows: the PowerShell hook. macOS / Linux: the Python port, run by this venv's Python.
+if sys.platform == "win32":
+    HOOK = (HOOKS_DIR / "speak-response.ps1").resolve()
+    BASE = 'powershell -NoProfile -ExecutionPolicy Bypass -File "%s"' % HOOK.as_posix()
+else:
+    HOOK = (HOOKS_DIR / "speak_response.py").resolve()
+    BASE = '"%s" "%s"' % (Path(sys.executable).as_posix(), HOOK.as_posix())
 ENTRIES = {
     "Stop": {"type": "command", "command": BASE, "timeout": 600, "statusMessage": "Speaking reply", "async": True},
     "PreToolUse": {"type": "command", "command": BASE + " -Mode transcript", "timeout": 600, "async": True},
@@ -33,7 +39,7 @@ def ours(cmd: str) -> bool:
 
 
 def foreign(cmd: str) -> bool:
-    return "speak-response.ps1" in cmd and not ours(cmd)
+    return ("speak-response.ps1" in cmd or "speak_response.py" in cmd) and not ours(cmd)
 
 
 def strip(groups, pred):
@@ -50,7 +56,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--settings", default=str(Path.home() / ".claude" / "settings.json"))
     ap.add_argument("--remove", action="store_true")
-    ap.add_argument("--replace", action="store_true", help="also remove speak-response.ps1 hooks from other folders")
+    ap.add_argument("--replace", action="store_true", help="also remove speak hooks from other folders")
     a = ap.parse_args()
 
     path = Path(a.settings)
@@ -61,7 +67,7 @@ def main() -> int:
         clash = [h.get("command", "") for ev in ENTRIES for g in hooks.get(ev, []) for h in g.get("hooks", [])
                  if foreign(h.get("command", ""))]
         if clash:
-            print("settings.json already runs another speak-response.ps1:\n  " + "\n  ".join(clash))
+            print("settings.json already runs another speak hook:\n  " + "\n  ".join(clash))
             print("Nothing changed. Re-run with --replace to point it at this repo.")
             return 2
 

@@ -8,3 +8,5 @@ demo-out/
 node_modules/
 # launch drafts stay local (not for the public history)
 launch/
+.pytest_cache/
+mac-check-report.txt

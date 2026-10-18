@@ -1,6 +1,7 @@
 # Mac and Linux: what a port would take
 
-Status: Windows only. Nothing below is started. This is the estimate behind the decision.
+Status (2026-10-17): built. macOS and Linux support landed (see the Platforms table in the README); macOS is beta until
+the real-device check in MAC-CHECK.md. What follows is the plan it was built from, kept for the reasoning.
 
 ## Why it matters
 

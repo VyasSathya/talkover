@@ -1,8 +1,9 @@
-# Python 3.11+ on Windows 10/11 (64-bit).
+# Python 3.11+. Windows 10/11 (64-bit), macOS 13+ or Linux.
 numpy>=2.0
 sounddevice>=0.5
 webrtcvad-wheels>=2.0.14
-pywinauto==0.6.9
-comtypes>=1.4
-pystray>=0.19.5
 Pillow>=10.0
+# Windows: UI Automation delivery into the Claude window, and the tray icon
+pywinauto==0.6.9; sys_platform == "win32"
+comtypes>=1.4; sys_platform == "win32"
+pystray>=0.19.5; sys_platform == "win32"

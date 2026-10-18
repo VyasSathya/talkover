@@ -52,16 +52,18 @@ import socket
 import subprocess
 import time
 from ctypes import wintypes as wt
+import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from platform_util import IS_WINDOWS, TEMP_DIR, single_instance as _single_instance
 from voice_config import MUTEX_PREFIX, DATA_DIR, LEVEL_PORT, LOG_DIR, STOP_SCRIPT
 import speak_nav   # Next / Back (2026-10-10), shared with voice_inbox.py
 import voice_chats  # chat picking (2026-10-10), shared with voice_inbox.py and read by speak-response.ps1
 
-TEMP = Path(os.getenv("TEMP", ""))
+TEMP = TEMP_DIR
 LISTEN_MUTED = TEMP / "claude-listen.muted"
 VOICE_MUTED = TEMP / "claude-voice.muted"
 BOTH_MUTED = TEMP / "claude-speak.muted"
@@ -74,7 +76,8 @@ SPEAK_WAV = TEMP / "claude-speak.wav"
 LOG = LOG_DIR / "voice_inbox.log"
 PANEL_LOG = LOG_DIR / "voice_panel.log"
 STATE_FILE = Path(os.getenv("VOICE_PANEL_STATE", str(DATA_DIR / "voice_panel.json")))
-NO_TRAY = os.getenv("VOICE_PANEL_NOTRAY") == "1"
+# The tray icon is Windows-only: on macOS pystray and Tk both need the main thread.
+NO_TRAY = os.getenv("VOICE_PANEL_NOTRAY") == "1" or not IS_WINDOWS
 
 USER_FRESH_S = 0.45        # claude-user.speaking younger than this = the user is talking now
 THINK_MAX_S = 90.0         # after a typed message, shimmer until Claude speaks or this long
@@ -661,251 +664,261 @@ class Renderer:
 
 
 # ---------------------------------------------------------------- Win32 layered window
+if IS_WINDOWS:
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
-kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-try:
-    winmm = ctypes.WinDLL("winmm")
-except OSError:
-    winmm = None
-
-LRESULT = ctypes.c_ssize_t
-WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
-
-
-class WNDCLASSEXW(ctypes.Structure):
-    _fields_ = [("cbSize", wt.UINT), ("style", wt.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int),
-                ("cbWndExtra", ctypes.c_int), ("hInstance", wt.HINSTANCE), ("hIcon", wt.HICON),
-                ("hCursor", wt.HANDLE), ("hbrBackground", wt.HBRUSH), ("lpszMenuName", wt.LPCWSTR),
-                ("lpszClassName", wt.LPCWSTR), ("hIconSm", wt.HICON)]
-
-
-class BLENDFUNCTION(ctypes.Structure):
-    _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
-                ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
-
-
-class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [("biSize", wt.DWORD), ("biWidth", ctypes.c_long), ("biHeight", ctypes.c_long),
-                ("biPlanes", wt.WORD), ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
-                ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", ctypes.c_long), ("biYPelsPerMeter", ctypes.c_long),
-                ("biClrUsed", wt.DWORD), ("biClrImportant", wt.DWORD)]
-
-
-class BITMAPINFO(ctypes.Structure):
-    _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wt.DWORD * 3)]
-
-
-class TRACKMOUSEEVENT(ctypes.Structure):
-    _fields_ = [("cbSize", wt.DWORD), ("dwFlags", wt.DWORD), ("hwndTrack", wt.HWND), ("dwHoverTime", wt.DWORD)]
-
-
-P = ctypes.POINTER
-user32.DefWindowProcW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
-user32.DefWindowProcW.restype = LRESULT
-user32.RegisterClassExW.argtypes = [P(WNDCLASSEXW)]
-user32.RegisterClassExW.restype = wt.ATOM
-user32.CreateWindowExW.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD, ctypes.c_int, ctypes.c_int,
-                                   ctypes.c_int, ctypes.c_int, wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID]
-user32.CreateWindowExW.restype = wt.HWND
-user32.UpdateLayeredWindow.argtypes = [wt.HWND, wt.HDC, P(wt.POINT), P(wt.SIZE), wt.HDC, P(wt.POINT),
-                                       wt.COLORREF, P(BLENDFUNCTION), wt.DWORD]
-user32.UpdateLayeredWindow.restype = wt.BOOL
-user32.GetDC.argtypes = [wt.HWND]
-user32.GetDC.restype = wt.HDC
-gdi32.CreateCompatibleDC.argtypes = [wt.HDC]
-gdi32.CreateCompatibleDC.restype = wt.HDC
-gdi32.CreateDIBSection.argtypes = [wt.HDC, P(BITMAPINFO), wt.UINT, P(ctypes.c_void_p), wt.HANDLE, wt.DWORD]
-gdi32.CreateDIBSection.restype = wt.HBITMAP
-gdi32.SelectObject.argtypes = [wt.HDC, wt.HGDIOBJ]
-gdi32.SelectObject.restype = wt.HGDIOBJ
-gdi32.DeleteObject.argtypes = [wt.HGDIOBJ]
-user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
-user32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
-user32.PeekMessageW.argtypes = [P(wt.MSG), wt.HWND, wt.UINT, wt.UINT, wt.UINT]
-user32.TranslateMessage.argtypes = [P(wt.MSG)]
-user32.DispatchMessageW.argtypes = [P(wt.MSG)]
-user32.DispatchMessageW.restype = LRESULT
-user32.MsgWaitForMultipleObjects.argtypes = [wt.DWORD, ctypes.c_void_p, wt.BOOL, wt.DWORD, wt.DWORD]
-user32.SetCapture.argtypes = [wt.HWND]
-user32.SetCapture.restype = wt.HWND
-user32.GetCursorPos.argtypes = [P(wt.POINT)]
-user32.GetMessagePos.restype = wt.DWORD
-user32.TrackMouseEvent.argtypes = [P(TRACKMOUSEEVENT)]
-user32.LoadCursorW.argtypes = [wt.HINSTANCE, ctypes.c_void_p]
-user32.LoadCursorW.restype = wt.HANDLE
-user32.SetCursor.argtypes = [wt.HANDLE]
-user32.SetCursor.restype = wt.HANDLE
-user32.MonitorFromRect.argtypes = [P(wt.RECT), wt.DWORD]
-user32.MonitorFromRect.restype = wt.HANDLE
-user32.GetWindowRect.argtypes = [wt.HWND, P(wt.RECT)]
-user32.DestroyWindow.argtypes = [wt.HWND]
-user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
-user32.IsWindowVisible.argtypes = [wt.HWND]
-kernel32.GetModuleHandleW.argtypes = [wt.LPCWSTR]
-kernel32.GetModuleHandleW.restype = wt.HMODULE
-try:
-    user32.GetDpiForWindow.argtypes = [wt.HWND]
-    user32.GetDpiForWindow.restype = wt.UINT
-except AttributeError:
-    pass
-
-WS_POPUP = 0x80000000
-WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_NOACTIVATE = 0x80000, 0x80, 0x8, 0x08000000
-SW_HIDE, SW_SHOWNOACTIVATE = 0, 4
-SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_NOOWNERZORDER = 0x1, 0x2, 0x4, 0x10, 0x200
-HWND_TOPMOST = wt.HWND(-1)
-WM_DESTROY, WM_CLOSE, WM_SETCURSOR, WM_MOUSEACTIVATE = 0x0002, 0x0010, 0x0020, 0x0021
-WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_CAPTURECHANGED = 0x0200, 0x0201, 0x0202, 0x0215
-WM_MOUSELEAVE, WM_DPICHANGED, WM_DISPLAYCHANGE, WM_QUIT = 0x02A3, 0x02E0, 0x007E, 0x0012
-MA_NOACTIVATE = 3
-HTCLIENT = 1
-TME_LEAVE = 0x2
-PM_REMOVE = 0x1
-QS_ALLINPUT = 0x04FF
-ULW_ALPHA = 2
-IDC_ARROW, IDC_HAND = 32512, 32649
-
-
-def set_dpi_awareness() -> None:
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     try:
-        if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):     # per-monitor v2
-            return
-    except (AttributeError, OSError):
-        pass
+        winmm = ctypes.WinDLL("winmm")
+    except OSError:
+        winmm = None
+
+    LRESULT = ctypes.c_ssize_t
+    WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+
+
+    class WNDCLASSEXW(ctypes.Structure):
+        _fields_ = [("cbSize", wt.UINT), ("style", wt.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int), ("hInstance", wt.HINSTANCE), ("hIcon", wt.HICON),
+                    ("hCursor", wt.HANDLE), ("hbrBackground", wt.HBRUSH), ("lpszMenuName", wt.LPCWSTR),
+                    ("lpszClassName", wt.LPCWSTR), ("hIconSm", wt.HICON)]
+
+
+    class BLENDFUNCTION(ctypes.Structure):
+        _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
+                    ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
+
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wt.DWORD), ("biWidth", ctypes.c_long), ("biHeight", ctypes.c_long),
+                    ("biPlanes", wt.WORD), ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
+                    ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", ctypes.c_long), ("biYPelsPerMeter", ctypes.c_long),
+                    ("biClrUsed", wt.DWORD), ("biClrImportant", wt.DWORD)]
+
+
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wt.DWORD * 3)]
+
+
+    class TRACKMOUSEEVENT(ctypes.Structure):
+        _fields_ = [("cbSize", wt.DWORD), ("dwFlags", wt.DWORD), ("hwndTrack", wt.HWND), ("dwHoverTime", wt.DWORD)]
+
+
+    P = ctypes.POINTER
+    user32.DefWindowProcW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+    user32.DefWindowProcW.restype = LRESULT
+    user32.RegisterClassExW.argtypes = [P(WNDCLASSEXW)]
+    user32.RegisterClassExW.restype = wt.ATOM
+    user32.CreateWindowExW.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD, ctypes.c_int, ctypes.c_int,
+                                       ctypes.c_int, ctypes.c_int, wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID]
+    user32.CreateWindowExW.restype = wt.HWND
+    user32.UpdateLayeredWindow.argtypes = [wt.HWND, wt.HDC, P(wt.POINT), P(wt.SIZE), wt.HDC, P(wt.POINT),
+                                           wt.COLORREF, P(BLENDFUNCTION), wt.DWORD]
+    user32.UpdateLayeredWindow.restype = wt.BOOL
+    user32.GetDC.argtypes = [wt.HWND]
+    user32.GetDC.restype = wt.HDC
+    gdi32.CreateCompatibleDC.argtypes = [wt.HDC]
+    gdi32.CreateCompatibleDC.restype = wt.HDC
+    gdi32.CreateDIBSection.argtypes = [wt.HDC, P(BITMAPINFO), wt.UINT, P(ctypes.c_void_p), wt.HANDLE, wt.DWORD]
+    gdi32.CreateDIBSection.restype = wt.HBITMAP
+    gdi32.SelectObject.argtypes = [wt.HDC, wt.HGDIOBJ]
+    gdi32.SelectObject.restype = wt.HGDIOBJ
+    gdi32.DeleteObject.argtypes = [wt.HGDIOBJ]
+    user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
+    user32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
+    user32.PeekMessageW.argtypes = [P(wt.MSG), wt.HWND, wt.UINT, wt.UINT, wt.UINT]
+    user32.TranslateMessage.argtypes = [P(wt.MSG)]
+    user32.DispatchMessageW.argtypes = [P(wt.MSG)]
+    user32.DispatchMessageW.restype = LRESULT
+    user32.MsgWaitForMultipleObjects.argtypes = [wt.DWORD, ctypes.c_void_p, wt.BOOL, wt.DWORD, wt.DWORD]
+    user32.SetCapture.argtypes = [wt.HWND]
+    user32.SetCapture.restype = wt.HWND
+    user32.GetCursorPos.argtypes = [P(wt.POINT)]
+    user32.GetMessagePos.restype = wt.DWORD
+    user32.TrackMouseEvent.argtypes = [P(TRACKMOUSEEVENT)]
+    user32.LoadCursorW.argtypes = [wt.HINSTANCE, ctypes.c_void_p]
+    user32.LoadCursorW.restype = wt.HANDLE
+    user32.SetCursor.argtypes = [wt.HANDLE]
+    user32.SetCursor.restype = wt.HANDLE
+    user32.MonitorFromRect.argtypes = [P(wt.RECT), wt.DWORD]
+    user32.MonitorFromRect.restype = wt.HANDLE
+    user32.GetWindowRect.argtypes = [wt.HWND, P(wt.RECT)]
+    user32.DestroyWindow.argtypes = [wt.HWND]
+    user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+    user32.IsWindowVisible.argtypes = [wt.HWND]
+    kernel32.GetModuleHandleW.argtypes = [wt.LPCWSTR]
+    kernel32.GetModuleHandleW.restype = wt.HMODULE
     try:
-        ctypes.WinDLL("shcore").SetProcessDpiAwareness(2)
-    except (AttributeError, OSError):
+        user32.GetDpiForWindow.argtypes = [wt.HWND]
+        user32.GetDpiForWindow.restype = wt.UINT
+    except AttributeError:
         pass
 
+    WS_POPUP = 0x80000000
+    WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_NOACTIVATE = 0x80000, 0x80, 0x8, 0x08000000
+    SW_HIDE, SW_SHOWNOACTIVATE = 0, 4
+    SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_NOOWNERZORDER = 0x1, 0x2, 0x4, 0x10, 0x200
+    HWND_TOPMOST = wt.HWND(-1)
+    WM_DESTROY, WM_CLOSE, WM_SETCURSOR, WM_MOUSEACTIVATE = 0x0002, 0x0010, 0x0020, 0x0021
+    WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_CAPTURECHANGED = 0x0200, 0x0201, 0x0202, 0x0215
+    WM_MOUSELEAVE, WM_DPICHANGED, WM_DISPLAYCHANGE, WM_QUIT = 0x02A3, 0x02E0, 0x007E, 0x0012
+    MA_NOACTIVATE = 3
+    HTCLIENT = 1
+    TME_LEAVE = 0x2
+    PM_REMOVE = 0x1
+    QS_ALLINPUT = 0x04FF
+    ULW_ALPHA = 2
+    IDC_ARROW, IDC_HAND = 32512, 32649
 
-class LayeredWindow:
-    CLASS = "TalkoverOrb"
 
-    def __init__(self, handler):
-        self.handler = handler
-        self._proc = WNDPROC(self._wndproc)       # keep a reference for the life of the window
-        self.hinst = kernel32.GetModuleHandleW(None)
-        wc = WNDCLASSEXW()
-        wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
-        wc.lpfnWndProc = self._proc
-        wc.hInstance = self.hinst
-        wc.lpszClassName = self.CLASS
-        user32.RegisterClassExW(ctypes.byref(wc))
-        ex = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
-        self.hwnd = user32.CreateWindowExW(ex, self.CLASS, "Talkover", WS_POPUP, 0, 0, 10, 10,
-                                           None, None, self.hinst, None)
-        self.memdc = gdi32.CreateCompatibleDC(None)
-        self.hbmp = None
-        self.old = None
-        self.w = self.h = 0
-        self.pix = None
-        self.cur_arrow = user32.LoadCursorW(None, ctypes.c_void_p(IDC_ARROW))
-        self.cur_hand = user32.LoadCursorW(None, ctypes.c_void_p(IDC_HAND))
-        self.tracking = False
-
-    def dpi(self) -> int:
+    def set_dpi_awareness() -> None:
         try:
-            return int(user32.GetDpiForWindow(self.hwnd)) or 96
+            if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):     # per-monitor v2
+                return
         except (AttributeError, OSError):
-            return 96
-
-    def resize(self, w: int, h: int) -> np.ndarray:
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = w
-        bmi.bmiHeader.biHeight = -h                 # top-down
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bits = ctypes.c_void_p()
-        hbmp = gdi32.CreateDIBSection(self.memdc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
-        prev = gdi32.SelectObject(self.memdc, hbmp)
-        if self.hbmp:
-            gdi32.DeleteObject(self.hbmp)
-        else:
-            self.old = prev
-        self.hbmp, self.w, self.h = hbmp, w, h
-        buf = (ctypes.c_uint8 * (w * h * 4)).from_address(bits.value)
-        self.pix = np.ctypeslib.as_array(buf).reshape(h, w, 4)
-        self.pix[:] = 0
-        return self.pix
-
-    def push(self) -> None:
-        gdi32.GdiFlush()
-        size = wt.SIZE(self.w, self.h)
-        src = wt.POINT(0, 0)
-        blend = BLENDFUNCTION(0, 0, 255, 1)
-        user32.UpdateLayeredWindow(self.hwnd, None, None, ctypes.byref(size), self.memdc, ctypes.byref(src),
-                                   0, ctypes.byref(blend), ULW_ALPHA)
-
-    def move(self, x: int, y: int) -> None:
-        user32.SetWindowPos(self.hwnd, None, int(x), int(y), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
-
-    def pos(self):
-        r = wt.RECT()
-        user32.GetWindowRect(self.hwnd, ctypes.byref(r))
-        return r.left, r.top
-
-    def keep_on_top(self) -> None:
-        user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
-
-    def show(self, on: bool) -> None:
-        user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE if on else SW_HIDE)
-        if on:
-            self.keep_on_top()
-
-    def _wndproc(self, hwnd, msg, wparam, lparam):
+            pass
         try:
-            if msg == WM_MOUSEACTIVATE:
-                return MA_NOACTIVATE                 # clicks never take focus from Claude's window
-            if msg == WM_SETCURSOR and (lparam & 0xFFFF) == HTCLIENT:
-                user32.SetCursor(self.cur_hand if self.handler.hover else self.cur_arrow)
-                return 1
-            if msg in (WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP):
-                x = ctypes.c_short(lparam & 0xFFFF).value
-                y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
-                mp = user32.GetMessagePos()               # screen position when the message was sent
-                self.handler.msg_pt = (ctypes.c_short(mp & 0xFFFF).value, ctypes.c_short((mp >> 16) & 0xFFFF).value)
-                if msg == WM_MOUSEMOVE:
-                    if not self.tracking:
-                        tme = TRACKMOUSEEVENT(ctypes.sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0)
-                        user32.TrackMouseEvent(ctypes.byref(tme))
-                        self.tracking = True
-                    self.handler.on_move(x, y)
-                elif msg == WM_LBUTTONDOWN:
-                    user32.SetCapture(hwnd)
-                    self.handler.on_down(x, y)
-                else:
-                    self.handler.on_up(x, y)          # before ReleaseCapture: it sends WM_CAPTURECHANGED
-                    user32.ReleaseCapture()
-                return 0
-            if msg == WM_MOUSELEAVE:
-                self.tracking = False
-                self.handler.on_leave()
-                return 0
-            if msg == WM_CAPTURECHANGED:
-                self.handler.on_capture_lost()
-                return 0
-            if msg == WM_DPICHANGED:
-                r = ctypes.cast(lparam, P(wt.RECT)).contents
-                self.handler.on_dpi(wparam & 0xFFFF, r.left, r.top)
-                return 0
-            if msg == WM_DISPLAYCHANGE:
-                self.handler.on_display_change()
-            if msg == WM_CLOSE:
-                self.handler.hide()
-                return 0
-            if msg == WM_DESTROY:
-                user32.PostQuitMessage(0)
-                return 0
-        except Exception:
-            log.exception("window message %#x", msg)
-        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+            ctypes.WinDLL("shcore").SetProcessDpiAwareness(2)
+        except (AttributeError, OSError):
+            pass
 
 
-# ---------------------------------------------------------------- the panel
+    class LayeredWindow:
+        CLASS = "TalkoverOrb"
+
+        def __init__(self, handler):
+            self.handler = handler
+            self._proc = WNDPROC(self._wndproc)       # keep a reference for the life of the window
+            self.hinst = kernel32.GetModuleHandleW(None)
+            wc = WNDCLASSEXW()
+            wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
+            wc.lpfnWndProc = self._proc
+            wc.hInstance = self.hinst
+            wc.lpszClassName = self.CLASS
+            user32.RegisterClassExW(ctypes.byref(wc))
+            ex = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE
+            self.hwnd = user32.CreateWindowExW(ex, self.CLASS, "Talkover", WS_POPUP, 0, 0, 10, 10,
+                                               None, None, self.hinst, None)
+            self.memdc = gdi32.CreateCompatibleDC(None)
+            self.hbmp = None
+            self.old = None
+            self.w = self.h = 0
+            self.pix = None
+            self.cur_arrow = user32.LoadCursorW(None, ctypes.c_void_p(IDC_ARROW))
+            self.cur_hand = user32.LoadCursorW(None, ctypes.c_void_p(IDC_HAND))
+            self.tracking = False
+
+        def dpi(self) -> int:
+            try:
+                return int(user32.GetDpiForWindow(self.hwnd)) or 96
+            except (AttributeError, OSError):
+                return 96
+
+        def resize(self, w: int, h: int) -> np.ndarray:
+            bmi = BITMAPINFO()
+            bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.bmiHeader.biWidth = w
+            bmi.bmiHeader.biHeight = -h                 # top-down
+            bmi.bmiHeader.biPlanes = 1
+            bmi.bmiHeader.biBitCount = 32
+            bits = ctypes.c_void_p()
+            hbmp = gdi32.CreateDIBSection(self.memdc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+            prev = gdi32.SelectObject(self.memdc, hbmp)
+            if self.hbmp:
+                gdi32.DeleteObject(self.hbmp)
+            else:
+                self.old = prev
+            self.hbmp, self.w, self.h = hbmp, w, h
+            buf = (ctypes.c_uint8 * (w * h * 4)).from_address(bits.value)
+            self.pix = np.ctypeslib.as_array(buf).reshape(h, w, 4)
+            self.pix[:] = 0
+            return self.pix
+
+        def push(self) -> None:
+            gdi32.GdiFlush()
+            size = wt.SIZE(self.w, self.h)
+            src = wt.POINT(0, 0)
+            blend = BLENDFUNCTION(0, 0, 255, 1)
+            user32.UpdateLayeredWindow(self.hwnd, None, None, ctypes.byref(size), self.memdc, ctypes.byref(src),
+                                       0, ctypes.byref(blend), ULW_ALPHA)
+
+        def move(self, x: int, y: int) -> None:
+            user32.SetWindowPos(self.hwnd, None, int(x), int(y), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+
+        def pos(self):
+            r = wt.RECT()
+            user32.GetWindowRect(self.hwnd, ctypes.byref(r))
+            return r.left, r.top
+
+        def keep_on_top(self) -> None:
+            user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+
+        def show(self, on: bool) -> None:
+            user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE if on else SW_HIDE)
+            if on:
+                self.keep_on_top()
+
+        def _wndproc(self, hwnd, msg, wparam, lparam):
+            try:
+                if msg == WM_MOUSEACTIVATE:
+                    return MA_NOACTIVATE                 # clicks never take focus from Claude's window
+                if msg == WM_SETCURSOR and (lparam & 0xFFFF) == HTCLIENT:
+                    user32.SetCursor(self.cur_hand if self.handler.hover else self.cur_arrow)
+                    return 1
+                if msg in (WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP):
+                    x = ctypes.c_short(lparam & 0xFFFF).value
+                    y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+                    mp = user32.GetMessagePos()               # screen position when the message was sent
+                    self.handler.msg_pt = (ctypes.c_short(mp & 0xFFFF).value, ctypes.c_short((mp >> 16) & 0xFFFF).value)
+                    if msg == WM_MOUSEMOVE:
+                        if not self.tracking:
+                            tme = TRACKMOUSEEVENT(ctypes.sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0)
+                            user32.TrackMouseEvent(ctypes.byref(tme))
+                            self.tracking = True
+                        self.handler.on_move(x, y)
+                    elif msg == WM_LBUTTONDOWN:
+                        user32.SetCapture(hwnd)
+                        self.handler.on_down(x, y)
+                    else:
+                        self.handler.on_up(x, y)          # before ReleaseCapture: it sends WM_CAPTURECHANGED
+                        user32.ReleaseCapture()
+                    return 0
+                if msg == WM_MOUSELEAVE:
+                    self.tracking = False
+                    self.handler.on_leave()
+                    return 0
+                if msg == WM_CAPTURECHANGED:
+                    self.handler.on_capture_lost()
+                    return 0
+                if msg == WM_DPICHANGED:
+                    r = ctypes.cast(lparam, P(wt.RECT)).contents
+                    self.handler.on_dpi(wparam & 0xFFFF, r.left, r.top)
+                    return 0
+                if msg == WM_DISPLAYCHANGE:
+                    self.handler.on_display_change()
+                if msg == WM_CLOSE:
+                    self.handler.hide()
+                    return 0
+                if msg == WM_DESTROY:
+                    user32.PostQuitMessage(0)
+                    return 0
+            except Exception:
+                log.exception("window message %#x", msg)
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+
+    # ---------------------------------------------------------------- the panel
+else:
+    def set_dpi_awareness() -> None:
+        pass
+
+# macOS / Linux use the Tk window (panel_tk.py); TALKOVER_PANEL_TK=1 forces it on Windows too, for testing.
+USE_TK = (not IS_WINDOWS) or os.getenv("TALKOVER_PANEL_TK") == "1"
+if USE_TK:
+    from panel_tk import TkWindow
+
 
 class Ease:
     def __init__(self, v=0.0):
@@ -927,7 +940,7 @@ class Panel:
         self._chats_t = 0.0
         self._list_key = None
         self.actions = queue.Queue()
-        self.win = LayeredWindow(self)
+        self.win = TkWindow(self) if USE_TK else LayeredWindow(self)
         self.levels = Levels()
         self.hover = None
         self.msg_pt = (0, 0)
@@ -995,10 +1008,13 @@ class Panel:
         self.win.move(x, y)
 
     def default_pos(self):
-        sw = user32.GetSystemMetrics(0)
-        return max(0, sw // 2 - self.lay.w // 2), int(12 * self.s)
+        sw = self.win.screen_size()[0] if USE_TK else user32.GetSystemMetrics(0)
+        return max(0, sw // 2 - self.lay.w // 2), int((36 if USE_TK else 12) * self.s)
 
     def on_screen(self, x, y) -> bool:
+        if USE_TK:
+            sw, sh = self.win.screen_size()
+            return -self.lay.w // 2 < int(x) < sw - self.lay.w // 2 and 0 <= int(y) < sh - 20
         M = self.lay.M
         r = wt.RECT(int(x) + M, int(y) + M, int(x) + self.lay.w - M, int(y) + self.lay.h - M)
         return bool(user32.MonitorFromRect(ctypes.byref(r), 0))
@@ -1377,7 +1393,7 @@ class Panel:
         elif name in ("next", "back"):
             log.info("%s button: %s", name, speak_nav.nav(name))
         elif name == "hide":
-            self.hide()
+            self.hide() if not NO_TRAY or IS_WINDOWS else self.quit_all()
         elif name == "orb":
             self.toggle_caption()
         elif name == "chats":
@@ -1420,7 +1436,10 @@ class Panel:
                 self.tray.stop()
         except Exception:
             pass
-        user32.DestroyWindow(self.win.hwnd)
+        if USE_TK:
+            self.win.destroy()
+        else:
+            user32.DestroyWindow(self.win.hwnd)
 
     # ---- tray: the panel is never lost. x hides it; the tray shows it again; Quit is only in the tray.
     def _tray(self):
@@ -1476,6 +1495,8 @@ class Panel:
 
     # ---- main loop
     def run(self):
+        if USE_TK:
+            return self.win.run(self)       # Tk's timer drives the same frame loop (panel_tk.py)
         if winmm:
             winmm.timeBeginPeriod(1)
         msg = wt.MSG()
@@ -1543,14 +1564,8 @@ def setup_logging():
 
 
 def single_instance(name: str):
-    """Named mutex: a handle if this is the only copy, None if one is already running."""
-    import ctypes
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateMutexW.restype = ctypes.c_void_p
-    h = k32.CreateMutexW(None, False, "Local\\" + MUTEX_PREFIX + name)
-    if not h or ctypes.get_last_error() == 183:   # ERROR_ALREADY_EXISTS
-        return None
-    return h
+    """A handle if this is the only copy, None if one is already running (named mutex / lock file)."""
+    return _single_instance(name, MUTEX_PREFIX)
 
 
 if __name__ == "__main__":

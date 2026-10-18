@@ -51,6 +51,8 @@ STT_HEALTH = STT_BASE + "/health"
 TTS_URL = TTS_BASE + "/v1/audio/speech"
 WHISPER_CONTAINER = os.getenv("TALKOVER_WHISPER_CONTAINER", "talkover-whisper")
 KOKORO_CONTAINER = os.getenv("TALKOVER_KOKORO_CONTAINER", "talkover-kokoro")
+# docker: the two containers above; native: engines/native/server.py (no Docker; Metal on Apple Silicon).
+ENGINES = os.getenv("TALKOVER_ENGINES", "docker").strip().lower()
 
 
 def pythonw() -> str:

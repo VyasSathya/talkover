@@ -29,7 +29,8 @@ import urllib.request
 import wave
 from pathlib import Path
 
-from voice_config import MUTEX_PREFIX, CODE_DIR, KOKORO_CONTAINER, SPEAK_HOOK, STT_URL, TTS_URL, WHISPER_CONTAINER
+from platform_util import IS_WINDOWS, TEMP_DIR, instance_running
+from voice_config import MUTEX_PREFIX, CODE_DIR, ENGINES, KOKORO_CONTAINER, SPEAK_HOOK, STT_URL, TTS_URL, WHISPER_CONTAINER
 
 SCRIPTS = ["voice_watchdog.py", "voice_inbox.py", "voice_panel.py"]
 if os.getenv("TALKOVER_STOP_WORD", "0") == "1":
@@ -48,6 +49,16 @@ def line(status, what, detail=""):
 
 
 def processes():
+    """Every process as {ProcessId, ParentProcessId, CommandLine} (PowerShell on Windows, ps on macOS / Linux)."""
+    if not IS_WINDOWS:
+        out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, timeout=30).stdout
+        procs = []
+        for ln in out.splitlines():
+            parts = ln.strip().split(None, 2)
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                procs.append({"ProcessId": int(parts[0]), "ParentProcessId": int(parts[1]),
+                              "CommandLine": parts[2] if len(parts) > 2 else ""})
+        return procs
     cmd = ("Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine "
            "| ConvertTo-Json -Compress")
     out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
@@ -57,13 +68,8 @@ def processes():
 
 
 def mutex_exists(name):
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.OpenMutexW.restype = ctypes.c_void_p
-    h = k32.OpenMutexW(0x00100000, False, "Local\\" + MUTEX_PREFIX + name)   # SYNCHRONIZE
-    if h:
-        k32.CloseHandle(ctypes.c_void_p(h))
-        return True
-    return False
+    """The program's single-instance lock is held (named mutex on Windows, lock file on macOS / Linux)."""
+    return instance_running(name, MUTEX_PREFIX)
 
 
 def check_processes():
@@ -74,28 +80,40 @@ def check_processes():
         return
     by_pid = {p["ProcessId"]: p for p in procs}
     def cmd(p):
-        return (p.get("CommandLine") or "").replace("/", "\\").lower()
+        c = (p.get("CommandLine") or "").lower()
+        return c.replace("/", "\\") if IS_WINDOWS else c
     for script in SCRIPTS:
         full = str(CODE_DIR / script).lower()          # only copies started from this folder count
+        full = full if IS_WINDOWS else full.replace("\\", "/")
         mine = [p for p in procs if full in cmd(p)]
         # a copy = a matching process whose parent is not itself a matching process (launcher -> child)
         roots = [p for p in mine if full not in cmd(by_pid.get(p["ParentProcessId"]) or {})]
         n = len(roots)
         pids = ",".join(str(p["ProcessId"]) for p in roots)
-        mtx = "mutex held" if mutex_exists(script[:-3]) else "no mutex (old code)"
+        mtx = ("mutex held" if IS_WINDOWS else "lock held") if mutex_exists(script[:-3]) else "no lock (old code)"
         status = "OK" if n == 1 else "FAIL"
         line(status, script, "%d running (pid %s), %s" % (n, pids or "-", mtx))
-    hook = str(SPEAK_HOOK).replace("/", "\\").lower()     # only this install's hook, not another copy's
+    hook = str(SPEAK_HOOK if IS_WINDOWS else SPEAK_HOOK.with_name("speak_response.py")).lower()
+    hook = hook.replace("/", "\\") if IS_WINDOWS else hook  # only this install's hook, not another copy's
     hooks = [p for p in procs if hook in cmd(p)]
-    line("OK" if len(hooks) <= 1 else "WARN", "speak-response.ps1 hooks",
+    line("OK" if len(hooks) <= 1 else "WARN", "speak hooks",
          "%d running (0 or 1 is normal)" % len(hooks))
 
 
 def check_containers():
+    if ENGINES == "native":
+        try:
+            pid = int((TEMP_DIR / "talkover-engines.pid").read_text().strip())
+            os.kill(pid, 0) if not IS_WINDOWS else None
+            line("OK", "native engines", "pid %d (engines/native/server.py)" % pid)
+        except (OSError, ValueError):
+            line("INFO", "native engines", "no pid file (started by hand, or not running)")
+        return
     for c in CONTAINERS:
         try:
             r = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}} since {{.State.StartedAt}}", c],
-                               capture_output=True, text=True, timeout=20, creationflags=NOWIN)
+                               capture_output=True, text=True, timeout=20,
+                               **({"creationflags": NOWIN} if IS_WINDOWS else {}))
             out = (r.stdout or r.stderr).strip()
         except Exception as e:
             out = str(e)
@@ -188,7 +206,7 @@ def check_roundtrip():
 
 
 def check_pause():
-    p = Path(os.getenv("TEMP", "")) / "claude-speak.pause"
+    p = TEMP_DIR / "claude-speak.pause"
     try:
         age = time.time() - p.stat().st_mtime
         line("OK" if age <= 6 else "WARN", "reading paused", "yes, for %.1f s" % age)

@@ -149,15 +149,11 @@ import webrtcvad
 
 
 def single_instance(name: str):
-    """Named mutex: returns a handle if this is the only copy, None if one is already running.
-    Keep the handle alive for the life of the process (Windows frees it when the process exits)."""
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateMutexW.restype = ctypes.c_void_p
-    h = k32.CreateMutexW(None, False, "Local\\" + MUTEX_PREFIX + name)
-    if not h or ctypes.get_last_error() == 183:   # ERROR_ALREADY_EXISTS
-        return None
-    return h
+    """A handle if this is the only copy, None if one is already running (Windows: named mutex; macOS / Linux: a
+    lock file). Keep the handle alive for the life of the process (the OS frees it when the process exits)."""
+    return _single_instance(name, MUTEX_PREFIX)
 
+from platform_util import IS_WINDOWS, TEMP_DIR, run_speak_hook, single_instance as _single_instance
 from voice_config import MUTEX_PREFIX, LEVEL_PORT, CODE_DIR, DATA_DIR, LOG_DIR, SPEAK_HOOK, STT_URL as _STT_URL
 
 LOG = LOG_DIR / "voice_inbox.log"
@@ -595,21 +591,21 @@ def strip_reading(text: str, readings, words=None, t0=None):
 
 # ---------------------------------------------------------------- control channel
 
-SPEAK_PID_FILE = Path(os.getenv("TEMP", "")) / "claude-speak.pid"     # written by ~/.claude/hooks/speak-response.ps1
-SPEAK_PAUSE_FILE = Path(os.getenv("TEMP", "")) / "claude-speak.pause"  # while present, that hook pauses playback
-SPEAK_CANCEL_FILE = Path(os.getenv("TEMP", "")) / "claude-speak.cancel"  # touched: queued speakers give up
-SPEAK_PROGRESS_FILE = Path(os.getenv("TEMP", "")) / "claude-speak.progress"  # text of the chunk being spoken right now
-USER_SPEAKING_FILE = Path(os.getenv("TEMP", "")) / "claude-user.speaking"  # touched while the user is talking; the speak hook yields to it
-SPEAK_PLAYING_FILE = Path(os.getenv("TEMP", "")) / "claude-speak.playing"  # "<start_ms> <end_ms>" epoch ms of the sentence playing
+SPEAK_PID_FILE = TEMP_DIR / "claude-speak.pid"     # written by ~/.claude/hooks/speak-response.ps1
+SPEAK_PAUSE_FILE = TEMP_DIR / "claude-speak.pause"  # while present, that hook pauses playback
+SPEAK_CANCEL_FILE = TEMP_DIR / "claude-speak.cancel"  # touched: queued speakers give up
+SPEAK_PROGRESS_FILE = TEMP_DIR / "claude-speak.progress"  # text of the chunk being spoken right now
+USER_SPEAKING_FILE = TEMP_DIR / "claude-user.speaking"  # touched while the user is talking; the speak hook yields to it
+SPEAK_PLAYING_FILE = TEMP_DIR / "claude-speak.playing"  # "<start_ms> <end_ms>" epoch ms of the sentence playing
 # 2026-10-05 night: the user's words no longer kill the reading. They hold it (this file, kept fresh by mark_keeper) until the user's
 # message is sent; then the hook replays the sentence the user talked over and reads the rest. See WordsHold.
-SPEAK_HOLD_FILE = Path(os.getenv("TEMP", "")) / "claude-speak.hold"
+SPEAK_HOLD_FILE = TEMP_DIR / "claude-speak.hold"
 # 2026-10-06: stamped when the user's words stop a reading. The speak hook then drops that reading's rest (waiting, held or
 # resumed) as soon as a newer reply announces itself in claude-speak.newest: the user hears the newest reply only.
-SPEAK_TALKED_FILE = Path(os.getenv("TEMP", "")) / "claude-speak.talkedover"
+SPEAK_TALKED_FILE = TEMP_DIR / "claude-speak.talkedover"
 # Which view the Claude window shows ("code" / "chat" / "unknown"), written by target_watch every TARGET_POLL_S. The
 # inbox delivers only into Claude Code, and the speak hook stays silent while the window shows a claude.ai chat.
-VOICE_TARGET_FILE = Path(os.getenv("TEMP", "")) / "claude-voice.target"
+VOICE_TARGET_FILE = TEMP_DIR / "claude-voice.target"
 TARGET_POLL_S = 1.5
 WORDS_HOLD_MAX_S = 300.0                   # a words hold never lasts longer than this
 WORDS_HOLD_IDLE_S = 8.0                    # ... nor this long after the last stamp backed by the user's words
@@ -1129,6 +1125,8 @@ def view_mode() -> str:
 
 
 def _read_view_mode() -> str:
+    if not IS_WINDOWS:
+        return "code"           # macOS / Linux: the tmux pane or app the backend types into runs Claude Code
     with _DELIVER_LOCK:
         try:
             if str(CODE_DIR) not in sys.path:
@@ -1149,8 +1147,8 @@ def _read_shown(mode: str):
     before); record None = no Claude Code chat on screen, or one whose title the app's session files do not have."""
     if mode == "chat":
         return True, None
-    if mode != "code":
-        return False, None
+    if mode != "code" or not IS_WINDOWS:
+        return False, None      # macOS / Linux: no desktop-app sidebar to read; every reply is read
     with _DELIVER_LOCK:
         if str(CODE_DIR) not in sys.path:
             sys.path.insert(0, str(CODE_DIR))
@@ -1177,11 +1175,7 @@ def _play_held(rec) -> None:
     if _HELD_STARTED.get(sid8) == mt:
         return
     _HELD_STARTED[sid8] = mt
-    import subprocess
-    subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle",
-                      "Hidden", "-File", str(SPEAK_HOOK), "-Mode", "held", "-Session", sid8],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
+    run_speak_hook("-Mode", "held", "-Session", sid8)
     log.info("window shows chat %r: playing the reply held for it", rec["title"])
 
 
@@ -1580,7 +1574,7 @@ RESULTS = collections.deque()
 
 # ---------------------------------------------------------------- delivery (type into Claude Code)
 
-user32 = ctypes.windll.user32
+user32 = ctypes.windll.user32 if IS_WINDOWS else None
 INPUT_KEYBOARD = 1
 KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_KEYUP = 0x0002
@@ -1646,6 +1640,12 @@ def find_window(title: str):
 
 _DELIVER_LOCK = threading.Lock()   # the loop and a late STT result may both deliver
 
+# macOS / Linux: tmux pane or macOS app (delivery_posix.py). None on Windows, which keeps UI Automation.
+POSIX_SINK = None
+if not IS_WINDOWS:
+    import delivery_posix
+    POSIX_SINK = delivery_posix.sink()
+
 
 def deliver(text: str) -> bool:
     with _DELIVER_LOCK:
@@ -1656,6 +1656,8 @@ def _deliver(text: str) -> bool:
     """Send text into Claude WITHOUT stealing focus (UI Automation, see uia_deliver.py).
     Falls back to keystrokes only when the Claude window is already in front; it never
     calls SetForegroundWindow, so a game or other app in front is left alone."""
+    if POSIX_SINK is not None:
+        return POSIX_SINK.deliver(text)
     try:
         sys.path.insert(0, str(CODE_DIR))
         from uia_deliver import deliver as uia_send
@@ -1743,6 +1745,8 @@ def _uia_forget():
 def stage_text(text: str, first: bool) -> str:
     """Put `text` at the end of the Claude box WITHOUT sending. Returns how: 'uia', 'keys' or ''."""
     with _DELIVER_LOCK:
+        if POSIX_SINK is not None:
+            return POSIX_SINK.stage(text, first)
         try:
             win, box = _uia_target()
             if box is not None:
@@ -1764,6 +1768,8 @@ def send_staged(parts, staged, note: str) -> bool:
     """Make sure every part (and the cut-off note) is in the box, then press Send / Enter once.
     Parts already staged are not typed again; anything missing (box cleared, staging failed) is added."""
     with _DELIVER_LOCK:
+        if POSIX_SINK is not None:
+            return POSIX_SINK.send(parts, staged, note)
         try:
             win, box = _uia_target()
             if box is not None:
@@ -1882,7 +1888,7 @@ class Utterance:
 
 
 def file_muted() -> bool:
-    _tmp = Path(os.getenv("TEMP", ""))
+    _tmp = TEMP_DIR
     return (_tmp / "claude-speak.muted").exists() or (_tmp / "claude-listen.muted").exists()
 
 
@@ -1987,7 +1993,7 @@ def main():
             STATE["muted"] = True
             kill_speak_hook("mute command %r" % text)
             try:
-                (Path(os.getenv("TEMP", "")) / "claude-speak.muted").touch()   # speak hook stays silent too
+                (TEMP_DIR / "claude-speak.muted").touch()   # speak hook stays silent too
             except OSError:
                 pass
             log.info("MUTED by %r; nothing delivered and nothing spoken until an unmute phrase", text)
@@ -1996,7 +2002,7 @@ def main():
             STATE["muted"] = False
             for _f in ("claude-speak.muted", "claude-listen.muted", "claude-voice.muted"):
                 try:
-                    (Path(os.getenv("TEMP", "")) / _f).unlink()
+                    (TEMP_DIR / _f).unlink()
                 except OSError:
                     pass
             log.info("UNMUTED by %r", text)
@@ -2266,6 +2272,8 @@ def main():
             return None, job.error, None
         return job.text, None, job.words
 
+    if POSIX_SINK is not None:
+        log.info("delivery: %s", POSIX_SINK.describe())
     log.info("voice inbox starting (stt %s, window %r, barge_in %s, floor %d ms, ceiling +%d ms, "
              "barge %d/%d ms, false-barge timeout %.1f s, max pause %.1f s, single-flight stt)",
              STT_URL, TARGET_TITLE, BARGE_IN, END_SILENCE_MS, EXTEND_SILENCE_MS,

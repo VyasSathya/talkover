@@ -31,6 +31,7 @@ from pathlib import Path
 import sounddevice as sd
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
+from platform_util import single_instance as _single_instance
 from voice_config import MUTEX_PREFIX, LOG_DIR, MODELS_DIR
 
 MODEL_DIR = MODELS_DIR / "vosk-model-small-en-us-0.15"
@@ -62,14 +63,8 @@ def send(command):
 
 
 def single_instance(name: str):
-    """Named mutex: a handle if this is the only copy, None if one is already running."""
-    import ctypes
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateMutexW.restype = ctypes.c_void_p
-    h = k32.CreateMutexW(None, False, "Local\\" + MUTEX_PREFIX + name)
-    if not h or ctypes.get_last_error() == 183:   # ERROR_ALREADY_EXISTS
-        return None
-    return h
+    """A handle if this is the only copy, None if one is already running (named mutex / lock file)."""
+    return _single_instance(name, MUTEX_PREFIX)
 
 
 def main():

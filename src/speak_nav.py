@@ -12,11 +12,14 @@ With a reply being read, the command goes to that speaker through claude-speak.n
 being read, back and again start the hook in replay mode, which plays the last reply read (from
 claude-speak.history); next does nothing.
 
-All files are in %TEMP%, read when called (a test points TEMP at a sandbox).
+All files are in the temp folder (%TEMP% on Windows, TALKOVER_TEMP or the system temp folder on macOS / Linux),
+read when called (a test points it at a sandbox).
 """
 import ctypes
 import os
 import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -26,11 +29,21 @@ _last_seq = [0]
 
 
 def _tmp() -> Path:
-    return Path(os.getenv("TEMP", ""))
+    if sys.platform == "win32":
+        return Path(os.getenv("TEMP", ""))
+    return Path(os.getenv("TALKOVER_TEMP") or tempfile.gettempdir())
 
 
 def _alive(pid: int) -> bool:
     """The process exists and has not exited (never signals it: os.kill(pid, 0) terminates on Windows)."""
+    if sys.platform != "win32":
+        try:
+            os.kill(int(pid), 0)        # POSIX: signal 0 only checks
+            return True
+        except PermissionError:
+            return True
+        except OSError:
+            return False
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.OpenProcess.restype = ctypes.c_void_p
     h = k32.OpenProcess(0x1000, False, int(pid))      # PROCESS_QUERY_LIMITED_INFORMATION
@@ -76,11 +89,9 @@ def _write_nav(cmd: str) -> None:
 
 
 def _start_replay(cmd: str) -> None:
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)     # hidden: never a console window
-    subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle",
-                      "Hidden", "-File", str(HOOK), "-Mode", "replay", "-Nav", cmd],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=flags, close_fds=True)
+    """Hidden, never a console window: the PowerShell hook on Windows, speak_response.py on macOS / Linux."""
+    from platform_util import run_speak_hook
+    run_speak_hook("-Mode", "replay", "-Nav", cmd)
 
 
 def nav(cmd: str) -> str:

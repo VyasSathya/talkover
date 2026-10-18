@@ -1,0 +1,17 @@
+# Talkover native speech engines (TALKOVER_ENGINES=native): Whisper and Kokoro in one Python process, no Docker.
+# Installed into the same venv, on top of requirements.txt. Python 3.11 to 3.13 (kokoro-onnx does not support 3.14 yet).
+# Minimums are releases from 2024-2025 that have every API engines/native uses; tested 2026-10-17 on Windows with
+# fastapi 0.143.3, uvicorn 0.54.0, python-multipart 0.0.32, numpy 2.5.4, huggingface_hub 2.2.0, kokoro-onnx 0.6.1,
+# faster-whisper 1.2.1 (ctranslate2 4.8.3, onnxruntime 1.31.0).
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.18
+numpy>=2.0
+huggingface_hub>=0.23.0
+# Kokoro text to speech (onnxruntime; model files from the kokoro-onnx GitHub release, see engines/native/fetch_models.py)
+kokoro-onnx>=0.4.9
+# Whisper speech to text. faster-whisper everywhere (CUDA or CPU); on Apple Silicon mlx-whisper (Metal) is used and
+# faster-whisper stays as the fallback for Macs where mlx cannot load (older macOS, x86 Python under Rosetta). It is
+# small next to mlx-whisper's own dependencies (torch).
+faster-whisper>=1.1.0
+mlx-whisper>=0.4.2; sys_platform == "darwin" and platform_machine == "arm64"
